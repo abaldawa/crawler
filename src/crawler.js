@@ -46,6 +46,7 @@ class Crawler {
      * 4] If step 2 is no then checks whether failedUrl has not breached retryLimit set by user for a failed URL
      *    If no then retry again or else does not retry
      * @param {string} failedUrl
+     * @return {string} - Status whether failedUrl is added to the queue or not
      */
     checkAndPushToQueueForRetry( failedUrl ) {
         if( this.#retryLimit > 0 ) {
