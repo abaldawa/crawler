@@ -2,23 +2,24 @@
  * User: abhijit.baldawa
  */
 
-const {baseUrl, concurrency, outputFile} = require("./site");
+const {baseUrl, concurrency, outputFile, retryLimit} = require("./site");
 const Crawler = require("./crawler");
 const store = require("./store");
 
 (async ()=>{
     console.time("totaltime");
-    console.log("Started crawling...");
 
     // 1. Init and delete any previous result file
     store.init(outputFile);
 
     // 2. Initialize the crawler
-    const crawler = new Crawler({baseUrl, concurrency});
+    const crawler = new Crawler({baseUrl, concurrency, retryLimit});
     crawler.addToQueue(baseUrl);
 
+    console.log(`Started crawling with baseUrl=${baseUrl}, concurrency = ${concurrency}, outputFile name = ${outputFile} and retryLimit = ${retryLimit} `);
+
     // 3. For every html scraped, save the static assets dependency and add links to the queue
-    for await(const {html, currentUrl, counter, queueLength} of crawler.crawl()) {
+    for await(const {html, currentUrl, totalLinks} of crawler.crawl()) {
         const scriptSrcs = Crawler.getAttributesBySelector("script", "src", html);
         const linkHrefs = Crawler.getAttributesBySelector("link", "href", html);
         const imgSrcs = Crawler.getAttributesBySelector("img", "src", html);
@@ -34,13 +35,18 @@ const store = require("./store");
                 image: imgSrcs
             }
         });
-        console.log(`counter = ${counter}, currentUrl = ${currentUrl}, queue length = ${queueLength}, totalLinksAddedToQueue = ${totalLinksAddedToQueue.length}`);
+        console.log(`totalLinks = ${totalLinks}, currentUrl = ${currentUrl}, totalLinksAddedToQueue = ${totalLinksAddedToQueue.length}, queue length = ${crawler.getQueueLength()}`);
     }
 
     // 4. Generate and save sitemap file to the disk
     store.createJsonResult();
 
-    console.log(`Ended. Total links crawled = ${crawler.getUniqueUrls().length}`);
+    // 5. Log crawler stats
+    console.log(`*********************** Crawling Ended ****************************
+     1] Total unique links crawled = ${crawler.getUniqueUrlsCount()}
+     2] Total links successfully saved = ${store.getStoreLength()}
+     3] Total links failed = ${crawler.getFailedUrlsCount()}
+     4] Output file = ${store.getOutputFilePath()}`);
     console.timeEnd("totaltime");
 })();
 

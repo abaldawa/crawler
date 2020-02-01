@@ -23,6 +23,7 @@ function init(outputFile) {
         }
     }
 }
+
 /**
  * NOTE: It is a BAD IDEA to save web scrapping results in-memory because
  * if the website is big then the process could go out of memory. The best approach
@@ -49,8 +50,24 @@ function createJsonResult() {
     fs.writeFileSync(resultFilePath, JSON.stringify(results, null, 2));
 }
 
+/**
+ * @return {number}
+ */
+function getStoreLength() {
+    return results.length;
+}
+
+/**
+ * @return {string} - Output file path
+ */
+function getOutputFilePath() {
+    return resultFilePath;
+}
+
 module.exports = {
   init,
   save,
-  createJsonResult
+  createJsonResult,
+  getStoreLength,
+  getOutputFilePath
 };

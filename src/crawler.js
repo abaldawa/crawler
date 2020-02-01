@@ -11,10 +11,18 @@ class Crawler {
     #queue = [];
     #uniqueUrls = [];
     #concurrency;
+    #retryLimit;
+    #failedUrlsToNumOfRetries = {};
+    #failedUrlStatus = Object.freeze({
+        EXCEEDED_RETRY_LIMIT: "RETRY_LIMIT_EXCEEDED",
+        RETRYING: "RETRYING",
+        NO_RETRY_LIMIT_SET: "NO_RETRY_LIMIT_SET"
+    });
 
-    constructor({baseUrl, concurrency}) {
+    constructor({baseUrl, concurrency = 3, retryLimit = 3}) {
         this.#baseUrl = baseUrl;
         this.#concurrency = concurrency;
+        this.#retryLimit = retryLimit;
     }
 
     /**
@@ -23,7 +31,7 @@ class Crawler {
      *
      * @return {string[]} - Array of URL's to crawl parallelly
      */
-    getUrls() {
+    getUrlsFromQueue() {
         return new Array(this.#concurrency)
                 .fill(true)
                 .map(()=>this.#queue.shift())
@@ -31,10 +39,53 @@ class Crawler {
     }
 
     /**
+     * This methods checks below:
+     * 1] If there is a retry limit set and is greater than 0
+     * 2] If step 1 is yes then checks whether the failedUrl has failed for the first time
+     * 3] If step 2 is yes then tracks the failedUrl and pushes the failedUrl to the queue again
+     * 4] If step 2 is no then checks whether failedUrl has not breached retryLimit set by user for a failed URL
+     *    If no then retry again or else does not retry
+     * @param {string} failedUrl
+     */
+    checkAndPushToQueueForRetry( failedUrl ) {
+        if( this.#retryLimit > 0 ) {
+            if( !this.#failedUrlsToNumOfRetries[failedUrl] ) {
+                this.#failedUrlsToNumOfRetries[failedUrl] = 1;
+                this.#queue.unshift(failedUrl);
+                return this.#failedUrlStatus.RETRYING;
+            } else if( this.#failedUrlsToNumOfRetries[failedUrl] < this.#retryLimit ){
+                this.#failedUrlsToNumOfRetries[failedUrl]++;
+                this.#queue.unshift(failedUrl);
+                return this.#failedUrlStatus.RETRYING;
+            } else {
+                return this.#failedUrlStatus.EXCEEDED_RETRY_LIMIT;
+            }
+        }
+
+        return this.#failedUrlStatus.NO_RETRY_LIMIT_SET;
+    }
+
+    /**
+     * If successfulUrl present in failedUrlsToNumOfRetries then deletes the url
+     * from the cache.
+     *
+     * @param {string} successfulUrl
+     * @return {boolean}
+     */
+    checkAndRemoveUrlFromFailedUrlsCache( successfulUrl ) {
+        if(this.#failedUrlsToNumOfRetries[successfulUrl]) {
+            delete this.#failedUrlsToNumOfRetries[successfulUrl];
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * This async generator function yields the results of a crawled html page and can be used with for await of loop
      * This method respects the concurrency passed to it in the constructor and scrapes those requests concurrently.
      *
-     * @return {AsyncGenerator<{html: string, currentUrl: string, queueLength: number, counter: number}, void, ?>}
+     * @return {AsyncGenerator<{html: string, currentUrl: string, totalLinks: number}, void, ?>}
      */
     async *crawl() {
         const browser = await puppeteer.launch();
@@ -42,15 +93,33 @@ class Crawler {
         let counter = 0;
 
         while( this.#queue.length ) {
-            const urlsToCrawl = this.getUrls();
+            const urlsToCrawl = this.getUrlsFromQueue();
             const promisesArr = urlsToCrawl.map( async currentUrl => {
                                     try{
-                                        counter++;
                                         await page.goto(currentUrl);
                                         const html = await page.content();
-                                        return {html, currentUrl, counter, queueLength: this.#queue.length};
+                                        counter++;
+
+                                        if(this.checkAndRemoveUrlFromFailedUrlsCache(currentUrl)) {
+                                            console.log(`Crawler: successfully retried URL = ${currentUrl}`);
+                                        }
+
+                                        return {html, currentUrl, totalLinks: counter };
                                     } catch(e) {
-                                        console.warn(`Error fetching content from URL: ${currentUrl}. Error: ${e}`);
+                                        const willRetry = this.checkAndPushToQueueForRetry(currentUrl);
+                                        const errMsg = `Crawler: Error fetching content from URL: ${currentUrl}. Error: ${e}`;
+
+                                        switch( willRetry ) {
+                                            case this.#failedUrlStatus.NO_RETRY_LIMIT_SET:
+                                                console.warn(`${errMsg}. No retry limit set. Skipping...`);
+                                                break;
+                                            case this.#failedUrlStatus.EXCEEDED_RETRY_LIMIT:
+                                                console.warn(`${errMsg}. Retry limit = ${this.#retryLimit} reached. Skipping...`);
+                                                break;
+                                            case this.#failedUrlStatus.RETRYING:
+                                                console.warn(`${errMsg}. Retrying later...`);
+                                                break;
+                                        }
                                     }
                                  } );
 
@@ -69,7 +138,7 @@ class Crawler {
      * This method adds URL to the crawler queue
      *
      * @param {string} URL - Url to add to the crawler queue
-     * @return boolean - true if successful else false
+     * @return {boolean} - true if successful else false
      */
     addToQueue( URL ) {
         if( URL.startsWith("/") ) {
@@ -92,21 +161,28 @@ class Crawler {
     }
 
     /**
-     * This method returns a copy of crawler queue
-     * @return {Array.<string>}
+     * This method returns the length of crawler queue
+     * @return {number}
      */
-    getQueue() {
-        return [...this.#queue];
+    getQueueLength() {
+        return this.#queue.length;
     }
 
     /**
-     * This method returns clone of unique URL's collected
+     * This method returns the count of unique URL's crawled
      * by the crawler.
      *
-     * @return {Array.<string>}
+     * @return {number}
      */
-    getUniqueUrls() {
-        return [...this.#uniqueUrls];
+    getUniqueUrlsCount() {
+        return this.#uniqueUrls.length;
+    }
+
+    /**
+     * @return {number}
+     */
+    getFailedUrlsCount() {
+        return Object.keys(this.#failedUrlsToNumOfRetries).length;
     }
 
     /**

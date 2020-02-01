@@ -1,5 +1,6 @@
 {
   "baseUrl": "https://www.cuvva.com",
   "concurrency": 3,
-  "outputFile": "siteMap.json"
+  "outputFile": "siteMap.json",
+  "retryLimit": 3
 }
